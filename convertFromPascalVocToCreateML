@@ -1,0 +1,89 @@
+import os
+import xml.etree.ElementTree as ET
+import json
+import random
+import shutil
+from typing import List, Dict
+
+def parse_voc_xml(xml_path: str) -> Dict:
+    tree = ET.parse(xml_path)
+    root = tree.getroot()
+    
+    filename = root.find('filename').text
+    objects = root.findall('object')
+    
+    annotations = []
+    for obj in objects:
+        name = obj.find('name').text
+        bndbox = obj.find('bndbox')
+        xmin = float(bndbox.find('xmin').text)
+        ymin = float(bndbox.find('ymin').text)
+        xmax = float(bndbox.find('xmax').text)
+        ymax = float(bndbox.find('ymax').text)
+        
+        width = xmax - xmin
+        height = ymax - ymin
+        x = xmin + width / 2
+        y = ymin + height / 2
+        
+        annotations.append({
+            "label": name,
+            "coordinates": {
+                "x": x,
+                "y": y,
+                "width": width,
+                "height": height
+            }
+        })
+    
+    return {"image": filename, "annotations": annotations}
+
+def convert_and_split_dataset(input_dir: str, output_dir: str, split_ratios: List[float]):
+    image_dir = input_dir
+    annotation_dir = os.path.join(input_dir, "annotations")
+    
+    all_images = [f for f in os.listdir(image_dir) if f.lower().endswith(('.png', '.jpg', '.jpeg'))]
+    random.shuffle(all_images)
+    
+    total_images = len(all_images)
+    split_points = [int(total_images * ratio) for ratio in split_ratios]
+    
+    splits = {
+        "Train": all_images[:split_points[0]],
+        "Valid": all_images[split_points[0]:split_points[0]+split_points[1]],
+        "Test": all_images[split_points[0]+split_points[1]:]
+    }
+    
+    for split_name, images in splits.items():
+        split_dir = os.path.join(output_dir, split_name)
+        os.makedirs(split_dir, exist_ok=True)
+        
+        createml_annotations = []
+        
+        for image in images:
+            # Copy image to split directory
+            src_image_path = os.path.join(image_dir, image)
+            dst_image_path = os.path.join(split_dir, image)
+            shutil.copy2(src_image_path, dst_image_path)
+            
+            # Parse XML annotation
+            xml_path = os.path.join(annotation_dir, os.path.splitext(image)[0] + '.xml')
+            if os.path.exists(xml_path):
+                annotation = parse_voc_xml(xml_path)
+                createml_annotations.append(annotation)
+        
+        # Save CreateML JSON annotation file
+        json_path = os.path.join(split_dir, f"{split_name}_annotations.json")
+        with open(json_path, 'w') as f:
+            json.dump(createml_annotations, f, indent=2)
+        
+        print(f"Processed {len(images)} images for {split_name}")
+
+if __name__ == "__main__":
+    input_directory = "Folder where the images are, in the folder there is a folder called annotations that have annotaions in PASCAL VOC XML format,"
+    output_directory = "Folder where we output the result Create ML format"
+    split_ratios = [0.75, 0.18, 0.07]  # Train, Valid, Test
+    
+    convert_and_split_dataset(input_directory, output_directory, split_ratios)
+    print("Dataset splitting and annotation conversion completed.")
+
